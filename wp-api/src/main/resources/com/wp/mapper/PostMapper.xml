@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
+<mapper namespace="com.wp.mapper.PostMapper">
+    <resultMap id="tenant" type="com.wp.dto.Tenant">
+        <result property="tenantId" column="blog_id" jdbcType="BIGINT"/>
+        <result property="domain" column="domain" jdbcType="VARCHAR"/>
+        <result property="path" column="path" jdbcType="VARCHAR"/>
+    </resultMap>
+    <resultMap id="post" type="com.wp.dto.Post">
+        <result property="id" column="ID" jdbcType="BIGINT"/>
+        <result property="categoryId" column="categoryId" jdbcType="BIGINT"/>
+        <result property="welink_title" column="post_title" jdbcType="LONGVARCHAR"/>
+        <result property="content" column="post_content" jdbcType="LONGVARCHAR"/>
+        <result property="author" column="post_author" jdbcType="BIGINT"/>
+        <result property="comment_status" column="comment_status" jdbcType="VARCHAR"/>
+        <result property="welink_creatTime" column="post_date" jdbcType="VARCHAR"/>
+        <result property="welink_nameCn" column="display_name" jdbcType="VARCHAR"/>
+        <result property="welink_accountid" column="welink_accountid" jdbcType="VARCHAR"/>
+        <result property="img_meta" column="img_meta" jdbcType="LONGVARCHAR"/>
+        <result property="welink_imgData" column="welink_imgData" jdbcType="VARCHAR"/>
+    </resultMap>
+
+    <select id="findTenant" resultMap="tenant">
+        SELECT blog_id,domain,path FROM wp_blogs
+    </select>
+
+    <select id="findPost" resultMap="post">
+        SELECT
+	p.ID,
+	p.post_title,
+	p.post_content,
+	p.post_author,
+	p.comment_status,
+	DATE_FORMAT(p.post_date, "%Y-%m-%d %T") AS post_date,
+	u.display_name,
+	(SELECT um.meta_value FROM wp_usermeta um WHERE um.user_id = u.ID AND um.meta_key = "accountid") AS welink_accountid,
+	(SELECT pm.meta_value FROM wp_#{tenantId,jdbcType=INTEGER}_postmeta pm WHERE pm.post_id = (SELECT pm2.meta_value FROM wp_#{tenantId,jdbcType=INTEGER}_postmeta pm2 WHERE pm2.post_id = p.ID AND pm2.meta_key = "_thumbnail_id" LIMIT 1) AND pm.meta_key = "_wp_attachment_metadata") AS img_meta,
+	(SELECT p2.guid FROM wp_#{tenantId,jdbcType=INTEGER}_posts p2 WHERE p2.ID = (SELECT pm2.meta_value FROM wp_#{tenantId,jdbcType=INTEGER}_postmeta pm2 WHERE pm2.post_id = p.ID AND pm2.meta_key = "_thumbnail_id" LIMIT 1)) AS welink_imgData
+FROM wp_#{tenantId,jdbcType=INTEGER}_posts p INNER JOIN wp_users u ON p.post_author = u.ID
+WHERE p.ID = #{id,jdbcType=INTEGER} LIMIT 1
+    </select>
+
+    <select id="findCategoriesByPostId" resultType="com.wp.dto.CategoryDTO">
+        SELECT
+	t.term_id,t.`name` AS term_name
+FROM
+	wp_#{tenantId,jdbcType=INTEGER}_terms AS t
+INNER JOIN wp_#{tenantId,jdbcType=INTEGER}_term_taxonomy AS tt ON t.term_id = tt.term_id
+INNER JOIN wp_#{tenantId,jdbcType=INTEGER}_term_relationships AS tr ON tr.term_taxonomy_id = tt.term_taxonomy_id
+WHERE
+	tt.taxonomy IN ('category')
+AND tr.object_id = #{id,jdbcType=INTEGER}
+ORDER BY
+	t. NAME ASC
+    </select>
+
+    <select id="findAllCategories" resultType="com.wp.dto.Category">
+        SELECT
+	t.term_id AS id,
+	tt.count,
+	t.`name`
+FROM
+	wp_2_terms AS t
+INNER JOIN wp_2_term_taxonomy AS tt ON t.term_id = tt.term_id
+WHERE
+	tt.taxonomy IN ('category')
+ORDER BY
+	t. NAME ASC
+    </select>
+
+    <select id="findPostsByCategory" resultMap="post">
+        SELECT
+        p.ID,
+        p.post_title,
+        p.post_content,
+        p.post_author,
+        p.comment_status,
+        DATE_FORMAT(p.post_date, "%Y-%m-%d %T") AS post_date,
+        u.display_name,
+        (SELECT um.meta_value FROM wp_usermeta um WHERE um.user_id = u.ID AND um.meta_key = "accountid") AS
+        welink_accountid,
+        (SELECT pm.meta_value FROM wp_#{tenantId,jdbcType=INTEGER}_postmeta pm WHERE pm.post_id = (SELECT pm2.meta_value
+        FROM wp_#{tenantId,jdbcType=INTEGER}_postmeta pm2 WHERE pm2.post_id = p.ID AND pm2.meta_key = "_thumbnail_id"
+        LIMIT 1) AND pm.meta_key = "_wp_attachment_metadata") AS img_meta,
+        (SELECT p2.guid FROM wp_#{tenantId,jdbcType=INTEGER}_posts p2 WHERE p2.ID = (SELECT pm2.meta_value FROM
+        wp_#{tenantId,jdbcType=INTEGER}_postmeta pm2 WHERE pm2.post_id = p.ID AND pm2.meta_key = "_thumbnail_id" LIMIT
+        1)) AS welink_imgData
+        FROM wp_#{tenantId,jdbcType=INTEGER}_posts p INNER JOIN wp_users u ON p.post_author = u.ID
+        WHERE p.ID in (
+        SELECT tr.object_id FROM wp_#{tenantId,jdbcType=INTEGER}_term_taxonomy AS tt
+        INNER JOIN wp_#{tenantId,jdbcType=INTEGER}_term_relationships AS tr ON tr.term_taxonomy_id = tt.term_taxonomy_id
+        WHERE tt.taxonomy IN ('category') AND tt.term_id = #{categoryId,jdbcType=INTEGER}
+        )
+        <choose>
+            <when test="order != null and 'desc'.equals(order)">
+                ORDER BY p.post_date DESC
+            </when>
+            <otherwise>
+                ORDER BY p.post_date ASC
+            </otherwise>
+        </choose>
+        LIMIT #{offset,jdbcType=INTEGER},#{limit,jdbcType=INTEGER}
+    </select>
+
+    <select id="findCommentsByPostId" resultType="com.wp.dto.Comment">
+        SELECT
+	p.comment_ID AS id,
+	p.comment_post_ID AS post,
+	p.comment_parent AS parent,
+	p.user_id AS author,
+	p.comment_author AS author_name,
+	DATE_FORMAT(p.comment_date, "%Y-%m-%d %T") AS date,
+	p.comment_content AS content,
+	(SELECT um.meta_value FROM wp_usermeta um WHERE um.user_id = u.ID AND um.meta_key = "accountid") AS accountid
+FROM wp_#{tenantId,jdbcType=INTEGER}_comments p INNER JOIN wp_users u ON p.user_id = u.ID
+WHERE p.comment_post_ID = #{postId,jdbcType=INTEGER} ORDER BY p.comment_date DESC
+    </select>
+
+    <select id="homepageData" resultMap="post">
+        <foreach collection="categoryIdList" item="item" separator=" UNION ALL ">
+            SELECT * FROM (SELECT
+            p.ID,
+            t.term_id AS categoryId,
+            p.post_title,
+            DATE_FORMAT(p.post_date, "%Y-%m-%d %T") AS post_date,
+            u.display_name,
+            (SELECT pm.meta_value FROM wp_#{tenantId,jdbcType=INTEGER}_postmeta pm WHERE pm.post_id = (SELECT
+            pm2.meta_value
+            FROM wp_#{tenantId,jdbcType=INTEGER}_postmeta pm2 WHERE pm2.post_id = p.ID AND pm2.meta_key =
+            "_thumbnail_id"
+            LIMIT 1) AND pm.meta_key = "_wp_attachment_metadata") AS img_meta,
+            (SELECT p2.guid FROM wp_#{tenantId,jdbcType=INTEGER}_posts p2 WHERE p2.ID = (SELECT pm2.meta_value FROM
+            wp_#{tenantId,jdbcType=INTEGER}_postmeta pm2 WHERE pm2.post_id = p.ID AND pm2.meta_key = "_thumbnail_id"
+            LIMIT
+            1)) AS welink_imgData
+            FROM wp_#{tenantId,jdbcType=INTEGER}_posts p INNER JOIN wp_users u ON p.post_author = u.ID
+            INNER JOIN (
+            SELECT DISTINCT tr.object_id,tt.term_id FROM wp_#{tenantId,jdbcType=INTEGER}_term_taxonomy AS tt
+            INNER JOIN wp_#{tenantId,jdbcType=INTEGER}_term_relationships AS tr ON tr.term_taxonomy_id =
+            tt.term_taxonomy_id
+            WHERE tt.taxonomy IN ('category') AND tt.term_id = #{item,jdbcType=INTEGER})t ON p.ID=t.object_id
+            ORDER BY p.post_date DESC LIMIT 3) t_#{item,jdbcType=INTEGER}
+        </foreach>
+    </select>
+
+    <!--当分类数目很多时，以上sql可能会超过mysql允许的查询语句最大值，此时要改成以下形式：-->
+    <!--SELECT A1.*-->
+    <!--FROM Article AS A1-->
+    <!--INNER JOIN (SELECT A.Category,A.InsertDate-->
+    <!--FROM Article AS A-->
+    <!--LEFT JOIN Article AS B-->
+    <!--ON A.Category = B.Category-->
+    <!--AND A.InsertDate <= B.InsertDate-->
+    <!--GROUP BY A.Category,A.InsertDate-->
+    <!--HAVING COUNT(B.InsertDate) <= @N-->
+    <!--) AS B1-->
+    <!--ON A1.Category = B1.Category-->
+    <!--AND A1.InsertDate = B1.InsertDate-->
+    <!--ORDER BY A1.Category,A1.InsertDate DESC-->
+</mapper>
